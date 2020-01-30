@@ -1,0 +1,293 @@
+---
+title: "Zertifikatsgespraech CAS ETH"
+subtitle: "str, Jun 18"
+output: html_notebook
+---
+
+#### Vorbereitung
+
+Zuerst werden die n?tigen Packages...
+```{r}
+library(tidyverse)
+```
+
+... und die Daten geladen.
+```{r}
+dat_init <- read.csv("\\\\adb.intra.admin.ch/Userhome$/BASPO-01/U80822632/config/Desktop/R/Datenblaetter/initial_hbmass_data.csv", sep = ";", header = T)
+```
+
+Dann werden die Daten mit den n?tigen Zusatzveriablen erg?nzt.
+*Wichtig:* Die Differenz der Log-Transformierten Daten entspricht der %-Ver?nderung (https://people.duke.edu/~rnau/411log.htm#changelog).
+
+```{r}
+dat_init <- dat_init %>% 
+  mutate(hbm_log_diff = log(hbmass_post_g) - log(hbmass_pre_g), #percent change / 100
+         hbm_rel_log_diff = log(relhbmass_post_gkg) - log(relhbmass_pre_gkg), #percent change/100
+         hbm_init_075 = hbmass_pre_g / (weight_pre_kg^0.75),
+         hbm_post_075 = hbmass_post_g / (weight_post_kg^0.75)) %>% 
+  
+  mutate(hbm_075_log_diff = log(hbm_post_075) - log(hbm_init_075), #percent change/100
+         hbm_init_075_center = hbm_init_075 - mean(hbm_init_075),
+         hbm_init_1_center   = relhbmass_pre_gkg - mean(relhbmass_pre_gkg)) #centered data
+```
+
+
+Nun die **Analyse**:
+
+### Ausgangslage / Problem
+
+"TypischerweisebringendieTeilnehmereineProblemstellungausIhreraktuellenBerufst?tigkeitmit.Solltekeinesolche vorhanden sein, so k?nnen die Teilnehmer ein entsprechendes Beispiel aus einer Vorlesung, Buch, R etc. verwenden.
+Zuerst soll die Problemstellung vorgestellt werden. Dies soll ohne Computer geschehen, z.B. mit Hilfe von (wenigen)bereitsausgedrucktenGra???ken"
+
+Mein Problem:
+
+Es wurde spekuliert, dass zwischen *H?hentrainingsresponse*, gemessen als Anstieg in der H?moglobinmasse (Hbmass), und *Initialer Hbmass* ein Zusammenhang besteht: N?mlich dass Athleten mit bereits hoher Hbmass diese nicht gleich gut steigern k?nnen.
+
+Wir halten diese Aussage f?r falsch. Wir m?chten diesen Zusammenhang empirisch pr?fen. Anhand von Hbmass-Daten, die bei m?nnlichen Athleten vor und nach einem H?hentraining gemessen wurden.
+
+
+Das zu pr?fende Grundmodell...
+
+```{r}
+lm_start <- lm(data = dat_init, hbm_rel_log_diff~hbm_init_1_center)
+
+summary(lm_start)
+
+# residuenanalyse
+plot(lm_start)
+
+```
+
+... und der entsprechende Plot:
+
+```{r}
+ggplot(data = dat_init, aes(x = relhbmass_pre_gkg,
+                            y = hbm_rel_log_diff))+
+  geom_point()+
+  geom_smooth(method = "lm", col = "black")+
+  labs(title = "Grundzusammenhang",
+       y = "Ver?nderung rel. Hbmass (logdiff)",
+       x = "Initiale rel. Hbmass (g*kg^-1)")+
+  theme_bw()
+```
+
+Dank der zentrierten Daten der Eingangsvariable wird bei *(Intercept)* getestet, ob allgemein ein pre-post Effekt besteht. Dieser ist klar signifikant. 
+
+Auch der Einfluss der initialen Hbmass ist signifikant - die Grundannahme ist also vorerst best?tigt: Es scheint der Zusammenhang (schwach) zu bestehen. Effektst?rke: r = -0.3, Steigung: -0.01.
+
+
+### Gegenargument 1: Skalierung Hbmasse - Gewicht
+
+
+Exponent Hbmass suchen:
+
+zuerst ohne skalierung
+```{r}
+ggplot(dat_init,aes(x = weight_pre_kg,y = hbmass_pre_g))+
+  geom_point()
+```
+
+Es gibt also einen Zusammenhang zwischen Hbmass und weight. Dieser soll "wegskaliert"" werden.
+
+Es passiert dies aber nicht richtig, wenn K?rpergewicht mit ^-1 Gewichtet (noch signifikanter Einfluss von skaliertem Gewicht):
+
+```{r}
+lm(data = dat_init, formula = relhbmass_pre_gkg ~ weight_pre_kg) %>% summary()
+```
+
+Auch sichttbar im Plot:
+
+```{r}
+ggplot(dat_init,aes(x = weight_pre_kg,y = relhbmass_pre_gkg))+
+  geom_point()+
+  geom_smooth(method = "lm", col = "black")+
+  labs(title = "Urspr?ngliche Skalierung",
+       y = "Hbmass skaliert auf K?rpergewicht^1 (g/kg)",
+       x = "K?rpergewicht (kg)")+
+  theme_bw()
+```
+
+
+
+Der richtige Skalierungsexponent wird also gewucht.
+Daf?r wird lm() auf log-log-plot angewandt:(s. https://en.wikipedia.org/wiki/Log%E2%80%93log_plot)
+
+```{r}
+ggplot(dat_init,aes(x = log(weight_pre_kg),y = log(hbmass_pre_g)))+
+  geom_point()+
+  geom_smooth(method = "lm", col = "black")+
+  labs(title = "Log-Log-Plot")+
+  theme_bw()
+```
+
+Koeffizienten (und entsprechende Konfidenzintervalle) f?r lm() im log-log-Plot werden bestimmt:
+
+```{r}
+
+lm_koef <- lm(data = dat_init,  log(hbmass_pre_g) ~ log(weight_pre_kg))
+summary(lm_koef)
+
+lm_koef$coef
+
+confint(lm_koef)
+
+# residuenanalyse
+plot(lm_koef)
+
+```
+
+VI beinhaltet Exponenten 0.75, der theoretisch begr?ndet werden kann. Wenn direkt der Steigungskoef des lm() im log-log-Plot verrwendet w?rde, w?re das Modell ev. overfitted.Daher wird 0.75 als Skalierungsexponent verwendet.
+
+Visuell und statistisch testen, ob Gewichtseinfluss verschwunden:
+
+```{r}
+ggplot(dat_init,aes(x = weight_pre_kg,y = hbmass_pre_g/weight_pre_kg^0.75))+
+  geom_point()+
+  geom_smooth(method = "lm", col = "black")+
+  labs(title = "Korrigierte Skalierung",
+       y = "Hbmass skaliert auf K?rpergewicht^0.75 (g*kg^-0.75)",
+       x = "K?rpergewicht (kg)")+
+  theme_bw()
+
+lm(data = dat_init, formula = hbm_init_075 ~ weight_pre_kg) %>% summary()
+```
+
+funktioniert... Signifikanter Gewichtseinfluss ist weg. Noch *aus Bl?dsinn* best-guess-Skalierungs-Exponentialfunktion in Graphik einzeichnen und best-guess-Skalierungs-Exponentialfunktion
+
+```{r}
+ggplot(dat_init,aes(x = weight_pre_kg,y = hbmass_pre_g))+
+  geom_point()+
+  stat_function(fun = function(x) {exp(lm_koef$coef[1]) * x ^lm_koef$coef[2] } ) #exp graph
+```
+
+Gewichtseinfluss overfitted eliminiert in Hbmass init: (aus Bl?dsinn)
+
+```{r}
+dat_init <- dat_init %>% 
+  mutate(hbm_init_exp = hbmass_pre_g / (weight_pre_kg^lm_koef$coef[2])) %>% 
+  mutate(hbm_init_exp_center = hbm_init_exp - mean(hbm_init_exp))
+
+lm_start_exp <- lm(data = dat_init, hbm_rel_log_diff ~ hbm_init_exp_center)
+
+summary(lm_start_exp)
+```
+
+
+Grundmodell mit "richtigem" Skalierungsexponent (0.75) formulieren:
+
+```{r}
+lm_start_075 <- lm(data = dat_init, hbm_075_log_diff ~ hbm_init_075_center)
+
+summary(lm_start_075)
+```
+
+Signifikanter Einfluss von Hbmass init ist nach korrekter Skalierung verschwunden.
+
+
+### Gegenargument 2: Regression to the mean
+
+Durch zuf?llige Messvariation in Hbmass-Messung entsteht Effekt in gleiche Richtung.
+
+Regression to the mean Effektst?rke absch?tzen durch Simulation.
+
+```{r}
+## simulierte daten
+
+nn = 10000
+set.seed(11)
+
+# pre
+hbm_pre_true_sim      <- rnorm(n = nn,mean = mean(dat_init$hbmass_pre_g), sd = sd(dat_init$hbmass_pre_g))
+hbm_pre_measured_sim  <- hbm_pre_true_sim * rnorm(n = nn,mean = 1,sd = 0.02) #mit random error 2% f?r hbmass
+
+bw_pre_true_sim       <- rnorm(n = nn,mean = mean(dat_init$weight_pre_kg), sd = sd(dat_init$weight_pre_kg))
+bw_pre_measured_sim   <- bw_pre_true_sim * rnorm(n = nn,mean = 1,sd = 0.01) #mit random error 1% f?r bw
+
+hbmrel_pre_measured_sim <- hbm_pre_measured_sim / bw_pre_measured_sim
+
+
+# post
+hbm_post_true_sim     <- hbm_pre_true_sim * (1+( rnorm(n = nn,
+                                                  mean = mean(dat_init$hbmass_change_percent),
+                                                  sd = sd(dat_init$hbmass_change_percent)) / 100 )) #mit echtem effekt
+hbm_post_measured_sim <- hbm_post_true_sim * rnorm(n = nn,mean = 1,sd = 0.02) #mit random error 2% f?r hbmass
+
+bw_post_true_sim      <- bw_pre_true_sim * (1+( rnorm(n = nn,
+                                                  mean = mean(dat_init$weight_change_percent),
+                                                  sd = sd(dat_init$weight_change_percent)) / 100 )) #mit echtem effekt
+bw_post_measured_sim   <- bw_post_true_sim * rnorm(n = nn,mean = 1,sd = 0.01) #mit random error 1% f?r bw
+
+hbmrel_post_measured_sim <- hbm_post_measured_sim / bw_post_measured_sim
+
+
+
+## reg2mean
+
+# reproduzieren ursprungszusammenhang
+logdiff_hbmrel_sim <- log(hbmrel_post_measured_sim) - log(hbmrel_pre_measured_sim)
+
+lm_sim <- lm(logdiff_hbmrel_sim~hbmrel_pre_measured_sim)
+summary(lm_sim)
+
+ggplot(data = data.frame(x = hbmrel_pre_measured_sim, y = logdiff_hbmrel_sim),
+       aes(x = x, y = y))+
+  geom_point()+
+  geom_smooth(color = "red", method = "lm")+
+  labs(title = "Simulation - Regression to the mean",
+       y = "Ver?nderung rel. Hbmass (logdiff)",
+       x = "Initiale rel. Hbmass (g*kg^-1)")+
+  theme_bw()
+
+```
+
+Effektst?rke (r) von Simuliertem Zusammenhang (notabene frei von Einfluss von initialer Hbmasse!) ist -0.001 (Steigung) . Beim Beobachteten Zusammenhang war diese -0.01 (1% weniger Effekt pro g/kg initialer Hbmasse). Ca. 1/10 davon kann also durch reg2mean erkl?rt werden, da die beiden Effekte (reg2mean und initialhbm) wohl (zeimlich) *additiv* w?ren.
+
+
+### Gegenargument 3: Einfluss Gewichtsver?nderung
+
+(Unabh?ngig von Argumenten 1 und 2)
+
+Gewichtsdifferenz k?nnte krasser Confounder f?r Ver?nderung in rel. Hbmass sein. Also mit ins Modell einbeziehen:
+
+```{r}
+dat_init <- dat_init %>% 
+  mutate(weight_log_diff = log(weight_post_kg) - log(weight_pre_kg))
+```
+
+Neues Modell (mit Gewichtsver?nderung als Var.)
+
+```{r}
+lm_init1_weight <- lm(data = dat_init, hbm_rel_log_diff~hbm_init_1_center + weight_log_diff) #blocking nach Sport versucht - nicht signifikant
+
+summary(lm_init1_weight)
+
+# residuenanalyse
+plot(lm_init1_weight)
+```
+
+
+Hbmass init f?llt raus. Wenn Modell mit kleinerem, das nur Gewichtsveriation als erkl?render Var beinhaltet verglichen wird...
+
+```{r}
+lm_weight <- lm(data = dat_init, hbm_rel_log_diff~weight_log_diff)
+
+# residuenanalyse
+plot(lm_weight)
+
+# Partial F-Test (wird modell besser mit zus?tzlichen Parametern?)
+anova(lm_weight, lm_init1_weight)
+drop1(lm_init1_weight, test = "F")
+```
+
+Modell wird also nicht besser durch Miteinbezug von hbm_init_1_center. Weight change erkl?rt schon "alles"...
+
+```{r}
+ggplot(data = dat_init, aes(x = weight_log_diff,
+                            y = hbm_rel_log_diff))+
+  geom_point()+
+  geom_smooth(method = "lm", col = "black")+
+  labs(title = "Einfluss Gewichtsveränderung",
+       y = "Veränderung rel. Hbmass (logdiff)",
+       x = "Veränderung Gewicht (logdiff)")+
+  theme_bw()
+```
